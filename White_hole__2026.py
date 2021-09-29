@@ -7,22 +7,22 @@ import os
 import sys
 import codecs
 
-def doseek(f, n):
+def Find(f, n):
     if sys.platform == 'win32':
         # Windows raw disks can only be seeked to a multiple of the block size
-        BLOCKSIZE = 512
-        na, nb = divmod(n, BLOCKSIZE)
-        f.seek(na * BLOCKSIZE)
+        Block = 512
+        na, nb = divmod(n, Block)
+        f.seek(na * Block)
         if nb:
             f.read(nb)
     else:
         f.seek(n)
 
-def readat(f, n, s):
+def read_data(f, n, s):
     pos = f.tell()
-    doseek(f, n)
+    Find(f, n)
     res = f.read(s)
-    doseek(f, pos)
+    Find(f, pos)
     return res
 
 def parseFilename(s):
@@ -55,18 +55,18 @@ ATTR_INFO = {
     0x100: ('log_util', 'LOGGED_UTILITY_STREAM', None),
 }
 
-def parse_varint(v):
+def Codec(v):
     if not v:
         return 0
     return int(codecs.encode(v[::-1], 'hex'), 16)
 
-def read_runlist(f, bpc, runlist):
+def List(f, bpc, runlist):
     out = bytearray()
     for rlen, roff in runlist:
-        out += readat(f, roff * bpc, rlen * bpc)
+        out += read_data(f, roff * bpc, rlen * bpc)
     return bytes(out)
 
-def parse_attr(f, bpc, chunk):
+def Unpack(f, bpc, chunk):
     type, size, nonres, namelen, nameoff = struct.unpack('<iiBBH', chunk[:12])
 
     if namelen:
@@ -95,16 +95,16 @@ def parse_attr(f, bpc, chunk):
             if rlpos + lenlen + offlen > len(chunk):
                 print("Warning: invalid runlist header %02x (runlist %s)" % (header, codecs.encode(chunk[rloff:], 'hex')), file=sys.stderr)
                 break
-            thislen = parse_varint(chunk[rlpos:rlpos+lenlen])
+            thislen = Codec(chunk[rlpos:rlpos+lenlen])
             rlpos += lenlen
-            thisoff = parse_varint(chunk[rlpos:rlpos+offlen])
+            thisoff = Codec(chunk[rlpos:rlpos+offlen])
             if thisoff and (thisoff & (1 << (8 * offlen - 1))):
                 thisoff -= 1 << (8 * offlen)
             rlpos += offlen
             curoff += thisoff
             runlist.append((thislen, curoff))
 
-        attrdata = lambda: sparser(read_runlist(f, bpc, runlist)[:size_actual])
+        attrdata = lambda: sparser(List(f, bpc, runlist)[:size_actual])
     else:
         attrlen, attroff = struct.unpack('<IH', chunk[16:22])
         data = chunk[attroff:attroff+attrlen]
@@ -129,7 +129,7 @@ def usa_fixup(chunk, chunkoff, usa_ofs, usa_count):
         upos += 2
     return chunk
 
-def parse_file(f, chunkoff, bpc, chunk):
+def File(f, chunkoff, bpc, chunk):
     magic, usa_ofs, usa_count, lsn, seq, link, attr_offset = struct.unpack(
         '<IHHQHHH', chunk[:22])
     attrs = collections.defaultdict(dict)
@@ -148,7 +148,7 @@ def parse_file(f, chunkoff, bpc, chunk):
             break
 
         try:
-            sname, name, data = parse_attr(f, bpc, chunk[pos:pos+size])
+            sname, name, data = Unpack(f, bpc, chunk[pos:pos+size])
             attrs[sname][name] = data
         except Exception as e:
             print("File at offset %d: failed to parse attr type=%d pos=%d: %s" % (chunkoff, type, pos, e), file=sys.stderr)
@@ -165,7 +165,7 @@ def parse_mft(f, bpc, mft):
 
         chunk = mft[i*1024:(i+1)*1024]
         if chunk[:4] == b'FILE':
-            out.append(parse_file(f, i * 1024, bpc, chunk))
+            out.append(File(f, i * 1024, bpc, chunk))
         else:
             out.append(None)
     sys.stderr.write("\rParsing MFT: Done!              \n")
@@ -174,9 +174,9 @@ def parse_mft(f, bpc, mft):
 
 def read_mft(f, bpc, mft_cluster, clusters_per_mft):
     print("Loading MBR from cluster %d" % mft_cluster, file=sys.stderr)
-    mft = readat(f, mft_cluster * bpc, clusters_per_mft * bpc)
+    mft = read_data(f, mft_cluster * bpc, clusters_per_mft * bpc)
     try:
-        mftattr = parse_file(f, 0, bpc, mft[:1024])
+        mftattr = File(f, 0, bpc, mft[:1024])
         newmft = mftattr['DATA'][None]()
         if len(newmft) < len(mft):
             raise Exception("$MFT truncated")
@@ -255,17 +255,17 @@ def main(argv):
         os.chdir(args.outdir)
 
     # parse essential details of the MBR
-    if readat(f, 3, 8) != b'NTFS    ':
+    if read_data(f, 3, 8) != b'NTFS    ':
         raise ValueError("Not an NTFS disk???")
 
-    bps, spc = struct.unpack('<HB', readat(f, 0xb, 3))
+    bps, spc = struct.unpack('<HB', read_data(f, 0xb, 3))
     if args.sector_size:
         bps = args.sector_size
     if args.cluster_size:
         spc = args.cluster_size
     bpc = bps * spc
 
-    mft_clust, mftmirr_clust, clust_per_mft = struct.unpack('<QQB', readat(f, 0x30, 17))
+    mft_clust, mftmirr_clust, clust_per_mft = struct.unpack('<QQB', read_data(f, 0x30, 17))
 
     print("Reading MFT", file=sys.stderr)
     if args.mft:
